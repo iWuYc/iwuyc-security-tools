@@ -1,29 +1,30 @@
 package com.iwuyc.tools.security;
 
-import com.iwuyc.tools.security.digest.Base64Utils;
+import com.iwuyc.tools.digest.Base64Utils;
 import lombok.Data;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
+import org.bouncycastle.crypto.params.RSAPrivateCrtKeyParameters;
+import org.bouncycastle.crypto.util.PrivateKeyFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.PEMEncryptor;
 import org.bouncycastle.openssl.PEMParser;
-import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
-import org.bouncycastle.openssl.jcajce.JcaPKCS8Generator;
-import org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8DecryptorProviderBuilder;
-import org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8EncryptorBuilder;
+import org.bouncycastle.openssl.jcajce.*;
+import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.OutputEncryptor;
 import org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemObjectGenerator;
 
-import java.io.StringReader;
-import java.io.StringWriter;
+import javax.swing.text.html.Option;
+import java.io.*;
 import java.security.*;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
+import java.security.spec.*;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Optional;
 
 /**
@@ -39,6 +40,9 @@ public class RsaUtils {
      */
     @Data
     public static class RsaPairKey {
+        private RSAPublicKey publicKey;
+        private RSAPrivateKey privateKey;
+
         public RsaPairKey(KeyPair keyPair) {
             this((RSAPublicKey) keyPair.getPublic(), (RSAPrivateKey) keyPair.getPrivate());
         }
@@ -48,15 +52,23 @@ public class RsaUtils {
             this.privateKey = privateKey;
         }
 
-        private RSAPublicKey publicKey;
-        private RSAPrivateKey privateKey;
+        public boolean hasPrivate() {
+            return null != privateKey;
+        }
+    }
 
+    @Data
+    public static class RsaPairPemInfo {
+        private String publicKey;
+        private String privateKey;
     }
 
     /**
      * 生成公钥和私钥
+     *
+     * @return 将生成的密钥对返回给调用方
      */
-    public static Optional<RsaPairKey> crtGenerator() {
+    public static Optional<RsaPairKey> generator() {
         try {
             KeyPairGenerator keyPairGen = KeyPairGenerator.getInstance("RSA");
             keyPairGen.initialize(2048);
@@ -81,36 +93,82 @@ public class RsaUtils {
         }
     }
 
-    public static Optional<String> toPemStr(RsaPairKey rsaPairKey) {
-        try (StringWriter write = new StringWriter(); final JcaPEMWriter jcaPEMWriter = new JcaPEMWriter(write);) {
-            OutputEncryptor encryptor =
-                    new JceOpenSSLPKCS8EncryptorBuilder(new ASN1ObjectIdentifier(NISTObjectIdentifiers.id_aes256_CBC.getId())).setPasssword("ssss".toCharArray()).build();
-            PemObjectGenerator pemObjGen = new JcaPKCS8Generator(rsaPairKey.getPrivateKey(), encryptor);
-            final PemObject generate = pemObjGen.generate();
-            jcaPEMWriter.writeObject(generate);
-            jcaPEMWriter.flush();
-            final String pemStr = write.toString();
-            System.out.println(pemStr);
-            return Optional.of(pemStr);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return Optional.empty();
+    public static Optional<RsaPairPemInfo> toPem(RsaPairKey rsaPairKey) {
+        return toPem(rsaPairKey, null);
     }
 
-    public static Optional<RsaPairKey> fromPemStr(String pemStr) {
+    public static Optional<RsaPairPemInfo> toPem(RsaPairKey rsaPairKey, char[] password) {
+        try {
+
+            // Public Key
+            PemObjectGenerator publicPemObjGen = new JcaMiscPEMGenerator(rsaPairKey.getPublicKey(), null);
+            String pubPemStr = toPemStr(publicPemObjGen);
+
+            // Private Key
+            OutputEncryptor encryptor =
+                    new JceOpenSSLPKCS8EncryptorBuilder(new ASN1ObjectIdentifier(NISTObjectIdentifiers.id_aes256_CBC.getId())).setPasssword(password).build();
+            PemObjectGenerator privatePemObjGen = new JcaPKCS8Generator(rsaPairKey.getPrivateKey(), encryptor);
+            String privatePemStr = toPemStr(privatePemObjGen);
+
+            RsaPairPemInfo result = new RsaPairPemInfo();
+            result.setPublicKey(pubPemStr);
+            result.setPrivateKey(privatePemStr);
+
+            return Optional.of(result);
+
+        } catch (OperatorCreationException | IOException e) {
+            throw new IllegalArgumentException("转换格式的时候出现异常。msg:" + e.getMessage(), e);
+        }
+    }
+
+    private static String toPemStr(PemObjectGenerator pemObjectGenerator) {
+        try (final StringWriter publicWrite = new StringWriter();
+             final JcaPEMWriter publicJcaPemWriter = new JcaPEMWriter(publicWrite)) {
+
+
+            final PemObject publicPemObj = pemObjectGenerator.generate();
+            publicJcaPemWriter.writeObject(publicPemObj);
+            publicJcaPemWriter.flush();
+            final String pubPemStr = publicWrite.toString();
+            System.out.println(pubPemStr);
+            return pubPemStr;
+        } catch (Exception e) {
+            throw new IllegalArgumentException(e);
+        }
+    }
+
+    public static Optional<Collection<RsaPairKey>> fromPemStr(String pemStr, char[] password) {
         try (StringReader reader = new StringReader(pemStr);
              final PEMParser pemParser = new PEMParser(reader);) {
-            PemObject pemObject = pemParser.readPemObject();
+            Object pemInfo;
+            Collection<RsaPairKey> rsaPairKeys = new ArrayList<>();
+            while (null != (pemInfo = pemParser.readObject())) {
+                JceOpenSSLPKCS8DecryptorProviderBuilder providerBuilder = new JceOpenSSLPKCS8DecryptorProviderBuilder();
+                providerBuilder.setProvider(new BouncyCastleProvider());
 
-            PKCS8EncryptedPrivateKeyInfo o = (PKCS8EncryptedPrivateKeyInfo) pemParser.readObject();
-            JceOpenSSLPKCS8DecryptorProviderBuilder providerBuilder = new JceOpenSSLPKCS8DecryptorProviderBuilder();
-            providerBuilder.setProvider(new BouncyCastleProvider());
 
-            PrivateKeyInfo privateKeyInfo = o.decryptPrivateKeyInfo(providerBuilder.build("ssss".toCharArray()));
-            System.out.println(o);
-            return Optional.empty();
+                PrivateKeyInfo privateKeyInfo;
+                if (pemInfo instanceof PKCS8EncryptedPrivateKeyInfo) {
+                    PKCS8EncryptedPrivateKeyInfo o = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
+                    privateKeyInfo = o.decryptPrivateKeyInfo(providerBuilder.build(password));
+                } else if (pemInfo instanceof PrivateKey) {
+                    privateKeyInfo = (PrivateKeyInfo) pemInfo;
+                } else {
+                    continue;
+                }
+
+                PKCS8EncryptedPrivateKeyInfo o = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
+//            PrivateKeyInfo privateKeyInfo = o.decryptPrivateKeyInfo(providerBuilder.build("ssss".toCharArray()));
+                final RSAPrivateCrtKeyParameters key = (RSAPrivateCrtKeyParameters) PrivateKeyFactory.createKey(privateKeyInfo);
+
+                final KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+                KeySpec pubKeySpec = new RSAPublicKeySpec(key.getModulus(), key.getPublicExponent());
+                final RSAPublicKey publicKey = (RSAPublicKey) keyFactory.generatePublic(pubKeySpec);
+                KeySpec priKeySpec = new RSAPrivateKeySpec(key.getModulus(), key.getP());
+                final RSAPrivateKey privateKey = (RSAPrivateKey) keyFactory.generatePrivate(priKeySpec);
+                rsaPairKeys.add(new RsaPairKey(publicKey, privateKey));
+            }
+            return Optional.of(rsaPairKeys);
         } catch (Exception e) {
             e.printStackTrace();
             return Optional.empty();

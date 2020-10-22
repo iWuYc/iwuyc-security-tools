@@ -1,4 +1,4 @@
-package com.iwuyc.tools.security.digest;
+package com.iwuyc.tools.digest;
 
 import java.util.Base64;
 

@@ -1,14 +1,14 @@
-package com.iwuyc.tools.security;
+package com.iwuyc.tools.security.rsa;
 
 import com.iwuyc.tools.digest.Base64Utils;
-import lombok.Data;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
+import org.bouncycastle.crypto.params.AsymmetricKeyParameter;
 import org.bouncycastle.crypto.params.RSAPrivateCrtKeyParameters;
 import org.bouncycastle.crypto.util.PrivateKeyFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openssl.PEMEncryptor;
+import org.bouncycastle.openssl.PEMKeyPair;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.*;
 import org.bouncycastle.operator.OperatorCreationException;
@@ -17,8 +17,9 @@ import org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemObjectGenerator;
 
-import javax.swing.text.html.Option;
-import java.io.*;
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.security.*;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
@@ -33,34 +34,6 @@ import java.util.Optional;
 public class RsaUtils {
     static {
         Security.addProvider(new BouncyCastleProvider());
-    }
-
-    /**
-     *
-     */
-    @Data
-    public static class RsaPairKey {
-        private RSAPublicKey publicKey;
-        private RSAPrivateKey privateKey;
-
-        public RsaPairKey(KeyPair keyPair) {
-            this((RSAPublicKey) keyPair.getPublic(), (RSAPrivateKey) keyPair.getPrivate());
-        }
-
-        public RsaPairKey(RSAPublicKey publicKey, RSAPrivateKey privateKey) {
-            this.publicKey = publicKey;
-            this.privateKey = privateKey;
-        }
-
-        public boolean hasPrivate() {
-            return null != privateKey;
-        }
-    }
-
-    @Data
-    public static class RsaPairPemInfo {
-        private String publicKey;
-        private String privateKey;
     }
 
     /**
@@ -139,38 +112,43 @@ public class RsaUtils {
 
     public static Optional<Collection<RsaPairKey>> fromPemStr(String pemStr, char[] password) {
         try (StringReader reader = new StringReader(pemStr);
-             final PEMParser pemParser = new PEMParser(reader);) {
+             final PEMParser pemParser = new PEMParser(reader)) {
             Object pemInfo;
             Collection<RsaPairKey> rsaPairKeys = new ArrayList<>();
             while (null != (pemInfo = pemParser.readObject())) {
                 JceOpenSSLPKCS8DecryptorProviderBuilder providerBuilder = new JceOpenSSLPKCS8DecryptorProviderBuilder();
                 providerBuilder.setProvider(new BouncyCastleProvider());
 
-
                 PrivateKeyInfo privateKeyInfo;
                 if (pemInfo instanceof PKCS8EncryptedPrivateKeyInfo) {
-                    PKCS8EncryptedPrivateKeyInfo o = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
-                    privateKeyInfo = o.decryptPrivateKeyInfo(providerBuilder.build(password));
+                    PKCS8EncryptedPrivateKeyInfo pkcs8EncryptedPrivateKeyInfo = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
+                    privateKeyInfo = pkcs8EncryptedPrivateKeyInfo.decryptPrivateKeyInfo(providerBuilder.build(password));
                 } else if (pemInfo instanceof PrivateKey) {
                     privateKeyInfo = (PrivateKeyInfo) pemInfo;
+                } else if (pemInfo instanceof PEMKeyPair) {
+                    final PEMKeyPair pemKeyPair = (PEMKeyPair) pemInfo;
+                    privateKeyInfo = pemKeyPair.getPrivateKeyInfo();
                 } else {
                     continue;
                 }
+                final AsymmetricKeyParameter asymmetricKeyParameter = PrivateKeyFactory.createKey(privateKeyInfo);
+                if (!(asymmetricKeyParameter instanceof RSAPrivateCrtKeyParameters)) {
+                    continue;
+                }
 
-                PKCS8EncryptedPrivateKeyInfo o = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
-//            PrivateKeyInfo privateKeyInfo = o.decryptPrivateKeyInfo(providerBuilder.build("ssss".toCharArray()));
-                final RSAPrivateCrtKeyParameters key = (RSAPrivateCrtKeyParameters) PrivateKeyFactory.createKey(privateKeyInfo);
-
+                final RSAPrivateCrtKeyParameters key = (RSAPrivateCrtKeyParameters) asymmetricKeyParameter;
                 final KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+
                 KeySpec pubKeySpec = new RSAPublicKeySpec(key.getModulus(), key.getPublicExponent());
                 final RSAPublicKey publicKey = (RSAPublicKey) keyFactory.generatePublic(pubKeySpec);
+
                 KeySpec priKeySpec = new RSAPrivateKeySpec(key.getModulus(), key.getP());
                 final RSAPrivateKey privateKey = (RSAPrivateKey) keyFactory.generatePrivate(priKeySpec);
+
                 rsaPairKeys.add(new RsaPairKey(publicKey, privateKey));
             }
             return Optional.of(rsaPairKeys);
         } catch (Exception e) {
-            e.printStackTrace();
             return Optional.empty();
         }
 

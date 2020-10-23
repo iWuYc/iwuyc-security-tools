@@ -1,6 +1,9 @@
 package com.iwuyc.tools.security;
 
 import com.iwuyc.tools.digest.Base64Utils;
+import com.iwuyc.tools.security.rsa.RsaPairKey;
+import com.iwuyc.tools.security.rsa.RsaPairPemInfo;
+import com.iwuyc.tools.security.rsa.RsaUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -15,9 +18,9 @@ public class RsaUtilsTest {
 
     @Test
     public void name() {
-        final Optional<RsaUtils.RsaPairKey> keys = RsaUtils.generator();
+        final Optional<RsaPairKey> keys = RsaUtils.generator();
         Assert.assertTrue(keys.isPresent());
-        final RsaUtils.RsaPairKey rsaPairKey = keys.get();
+        final RsaPairKey rsaPairKey = keys.get();
         final RSAPrivateKey privateKey = rsaPairKey.getPrivateKey();
         String privateKeyStr = Base64Utils.encoding(privateKey.getEncoded());
 
@@ -29,10 +32,10 @@ public class RsaUtilsTest {
         RsaUtils.readCrt(publicKeyStr, privateKeyStr);
 
 
-        Optional<RsaUtils.RsaPairPemInfo> pemStrOpt = RsaUtils.toPem(rsaPairKey, password);
+        Optional<RsaPairPemInfo> pemStrOpt = RsaUtils.toPem(rsaPairKey, password);
         Assert.assertTrue(pemStrOpt.isPresent());
-        RsaUtils.RsaPairPemInfo pemStr = pemStrOpt.get();
-        Optional<Collection<RsaUtils.RsaPairKey>> rsaPairKey1;
+        RsaPairPemInfo pemStr = pemStrOpt.get();
+        Optional<Collection<RsaPairKey>> rsaPairKey1;
 //        rsaPairKey1 = RsaUtils.fromPemStr(pemStr.getPrivateKey());
 //        System.out.println(rsaPairKey1);
 

@@ -78,8 +78,13 @@ public class RsaUtils {
             String pubPemStr = toPemStr(publicPemObjGen);
 
             // Private Key
-            OutputEncryptor encryptor =
-                    new JceOpenSSLPKCS8EncryptorBuilder(new ASN1ObjectIdentifier(NISTObjectIdentifiers.id_aes256_CBC.getId())).setPasssword(password).build();
+            final JceOpenSSLPKCS8EncryptorBuilder jceOpenSSLPKCS8EncryptorBuilder = new JceOpenSSLPKCS8EncryptorBuilder(new ASN1ObjectIdentifier(NISTObjectIdentifiers.id_aes256_CBC.getId()));
+            OutputEncryptor encryptor;
+            if (null != password && password.length > 0) {
+                encryptor = jceOpenSSLPKCS8EncryptorBuilder.setPasssword(password).build();
+            } else {
+                encryptor = null;
+            }
             PemObjectGenerator privatePemObjGen = new JcaPKCS8Generator(rsaPairKey.getPrivateKey(), encryptor);
             String privatePemStr = toPemStr(privatePemObjGen);
 

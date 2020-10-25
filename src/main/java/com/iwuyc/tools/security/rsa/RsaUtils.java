@@ -1,36 +1,53 @@
 package com.iwuyc.tools.security.rsa;
 
+import com.google.common.collect.Sets;
 import com.iwuyc.tools.digest.Base64Utils;
+import com.iwuyc.tools.security.rsa.parsers.PemObjectInfo;
+import com.iwuyc.tools.security.rsa.spi.PrivateKeyParser;
+import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
-import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.crypto.params.AsymmetricKeyParameter;
-import org.bouncycastle.crypto.params.RSAPrivateCrtKeyParameters;
-import org.bouncycastle.crypto.util.PrivateKeyFactory;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openssl.PEMKeyPair;
 import org.bouncycastle.openssl.PEMParser;
-import org.bouncycastle.openssl.jcajce.*;
+import org.bouncycastle.openssl.jcajce.JcaMiscPEMGenerator;
+import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
+import org.bouncycastle.openssl.jcajce.JcaPKCS8Generator;
+import org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8EncryptorBuilder;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.OutputEncryptor;
-import org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemObjectGenerator;
 
+import javax.crypto.Cipher;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.security.*;
-import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.*;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.KeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.*;
 
 /**
  * @author Neil
  */
+@SuppressWarnings("unused")
+@Slf4j
 public class RsaUtils {
+    private static final Map<String, PrivateKeyParser> PEM_PARSER_MAP;
+
     static {
         Security.addProvider(new BouncyCastleProvider());
+        ServiceLoader<PrivateKeyParser> pemParsers = ServiceLoader.load(PrivateKeyParser.class);
+        final Map<String, PrivateKeyParser> temp = new HashMap<>();
+        for (PrivateKeyParser privateKeyParser : pemParsers) {
+            Set<String> types = privateKeyParser.types();
+            for (String type : types) {
+                temp.put(type, privateKeyParser);
+            }
+        }
+        PEM_PARSER_MAP = Collections.unmodifiableMap(temp);
     }
 
     /**
@@ -107,6 +124,7 @@ public class RsaUtils {
         try (final FileInputStream fis = new FileInputStream(pemFile)) {
             return loadPriKeyFromPem(fis, passwords);
         } catch (IOException e) {
+            e.printStackTrace();
             return Collections.emptyList();
         }
     }
@@ -127,6 +145,9 @@ public class RsaUtils {
         return Collections.emptyList();
     }
 
+    private static final Set<String> PRIVAT3E_KEY_TYPE =
+            Collections.unmodifiableSet(Sets.newHashSet("ENCRYPTED PRIVATE KEY", "PRIVATE KEY"));
+
     /**
      * 从pem格式的流数据中加载私钥
      *
@@ -137,45 +158,25 @@ public class RsaUtils {
     public static List<RsaPairKey> loadPriKeyFromPem(InputStream is, char[]... passwords) {
         try (InputStreamReader isr = new InputStreamReader(is);
              final PEMParser pemParser = new PEMParser(isr)) {
-            Object pemInfo;
+            PemObject pemObject;
             List<RsaPairKey> rsaPairKeys = new ArrayList<>();
             int passwordIndex = 0;
-            while (null != (pemInfo = pemParser.readObject())) {
-                JceOpenSSLPKCS8DecryptorProviderBuilder providerBuilder = new JceOpenSSLPKCS8DecryptorProviderBuilder();
-                providerBuilder.setProvider(new BouncyCastleProvider());
-
-                PrivateKeyInfo privateKeyInfo;
-                if (pemInfo instanceof PKCS8EncryptedPrivateKeyInfo) {
-                    PKCS8EncryptedPrivateKeyInfo pkcs8EncryptedPrivateKeyInfo = (PKCS8EncryptedPrivateKeyInfo) pemInfo;
-                    if (passwordIndex >= passwords.length) {
-                        throw new IllegalArgumentException("index:[" + passwordIndex + "]未找到相应的密码。");
-                    }
-                    final char[] password = passwords[passwordIndex];
-                    privateKeyInfo = pkcs8EncryptedPrivateKeyInfo.decryptPrivateKeyInfo(providerBuilder.build(password));
-                    passwordIndex++;
-                } else if (pemInfo instanceof PrivateKeyInfo) {
-                    privateKeyInfo = (PrivateKeyInfo) pemInfo;
-                } else if (pemInfo instanceof PEMKeyPair) {
-                    final PEMKeyPair pemKeyPair = (PEMKeyPair) pemInfo;
-                    privateKeyInfo = pemKeyPair.getPrivateKeyInfo();
-                } else {
+            while (null != (pemObject = pemParser.readPemObject())) {
+                final PrivateKeyParser privateKeyParser = PEM_PARSER_MAP.get(pemObject.getType());
+                if (null == privateKeyParser) {
                     continue;
                 }
-                final AsymmetricKeyParameter asymmetricKeyParameter = PrivateKeyFactory.createKey(privateKeyInfo);
-                if (!(asymmetricKeyParameter instanceof RSAPrivateCrtKeyParameters)) {
+                PemObjectInfo.PemObjectInfoBuilder pemObjectInfoBuilder = PemObjectInfo.builder();
+                pemObjectInfoBuilder.pemObject(pemObject);
+                if (privateKeyParser.isEncrypt(pemObject)) {
+                    pemObjectInfoBuilder.password(passwords[passwordIndex]);
+                }
+                Optional<RsaPairKey> rsaPairKeyOpt = privateKeyParser.parser(pemObjectInfoBuilder.build());
+                if (!rsaPairKeyOpt.isPresent()) {
+                    log.warn("未能解析出私钥信息。pemObject:{}", pemObject);
                     continue;
                 }
-
-                final RSAPrivateCrtKeyParameters key = (RSAPrivateCrtKeyParameters) asymmetricKeyParameter;
-                final KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-
-                KeySpec pubKeySpec = new RSAPublicKeySpec(key.getModulus(), key.getPublicExponent());
-                final RSAPublicKey publicKey = (RSAPublicKey) keyFactory.generatePublic(pubKeySpec);
-
-                KeySpec priKeySpec = new RSAPrivateKeySpec(key.getModulus(), key.getP());
-                final RSAPrivateKey privateKey = (RSAPrivateKey) keyFactory.generatePrivate(priKeySpec);
-
-                rsaPairKeys.add(new RsaPairKey(publicKey, privateKey));
+                rsaPairKeys.add(rsaPairKeyOpt.get());
             }
             return Collections.unmodifiableList(rsaPairKeys);
         } catch (Exception e) {
@@ -233,5 +234,38 @@ public class RsaUtils {
             e.printStackTrace();
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * 公钥加密
+     *
+     * @param data 待加密的数据
+     * @param key  公钥
+     */
+    public static Optional<String> encrypt(String data, Key key) {
+        try {
+            //RSA加密
+            Cipher cipher = Cipher.getInstance("RSA");
+            cipher.init(Cipher.ENCRYPT_MODE, key);
+            return Optional.of(Base64Utils.encoding(cipher.doFinal(data.getBytes(StandardCharsets.UTF_8))));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Optional.empty();
+        }
+    }
+
+    public static Optional<String> decrypt(String str, Key key) {
+        //64位解码加密后的字符串
+        byte[] inputByte = Base64Utils.decoding(str);
+        //base64编码的私钥
+        //RSA解密
+        try {
+            Cipher cipher = Cipher.getInstance("RSA");
+            cipher.init(Cipher.DECRYPT_MODE, key);
+            return Optional.of(new String(cipher.doFinal(inputByte)));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Optional.empty();
+        }
     }
 }

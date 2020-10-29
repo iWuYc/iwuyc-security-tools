@@ -244,8 +244,10 @@ public class RsaUtils {
      */
     public static Optional<String> encrypt(String data, Key key) {
         try {
+            final BouncyCastleProvider bouncyCastleProvider = new BouncyCastleProvider();
+
             //RSA加密
-            Cipher cipher = Cipher.getInstance("RSA");
+            Cipher cipher = Cipher.getInstance("RSA",bouncyCastleProvider);
             cipher.init(Cipher.ENCRYPT_MODE, key);
             return Optional.of(Base64Utils.encoding(cipher.doFinal(data.getBytes(StandardCharsets.UTF_8))));
         } catch (Exception e) {
@@ -259,8 +261,13 @@ public class RsaUtils {
         byte[] inputByte = Base64Utils.decoding(str);
         //base64编码的私钥
         //RSA解密
+        Runtime.getRuntime().addShutdownHook(new Thread(()->{
+
+        }));
+
         try {
-            Cipher cipher = Cipher.getInstance("RSA");
+            final BouncyCastleProvider bouncyCastleProvider = new BouncyCastleProvider();
+            Cipher cipher = Cipher.getInstance("RSA",bouncyCastleProvider);
             cipher.init(Cipher.DECRYPT_MODE, key);
             return Optional.of(new String(cipher.doFinal(inputByte)));
         } catch (Exception e) {

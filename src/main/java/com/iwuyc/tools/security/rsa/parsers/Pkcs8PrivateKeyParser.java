@@ -25,8 +25,8 @@ public class Pkcs8PrivateKeyParser implements PrivateKeyParser {
             final byte[] content = pemObject.getContent();
             PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(content);
             KeyFactory kf = KeyFactory.getInstance("RSA");
-            PrivateKey privateKey = kf.generatePrivate(keySpec);
 
+            PrivateKey privateKey = kf.generatePrivate(keySpec);
             RSAPrivateCrtKey privk = (RSAPrivateCrtKey) privateKey;
 
             RSAPublicKeySpec publicKeySpec = new RSAPublicKeySpec(privk.getModulus(), privk.getPublicExponent());

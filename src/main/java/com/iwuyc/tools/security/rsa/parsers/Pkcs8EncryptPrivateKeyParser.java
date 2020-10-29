@@ -16,8 +16,6 @@ public class Pkcs8EncryptPrivateKeyParser extends Pkcs8PrivateKeyParser {
     @Override
     public Optional<RsaPairKey> parser(PemObjectInfo source) {
         try {
-            KeyFactory kf = KeyFactory.getInstance("RSA");
-
             PemObject encryptPemObject = source.getPemObject();
             byte[] content = encryptPemObject.getContent();
             JceOpenSSLPKCS8DecryptorProviderBuilder providerBuilder = new JceOpenSSLPKCS8DecryptorProviderBuilder();
